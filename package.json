@@ -1,0 +1,14 @@
+{
+  "name": "emission-monitor-console",
+  "version": "1.0.0",
+  "private": true,
+  "description": "污染源在线监测与排污总量核算台",
+  "main": "server/index.js",
+  "scripts": {
+    "start": "node server/index.js",
+    "dev": "node server/index.js"
+  },
+  "dependencies": {
+    "express": "^4.19.2"
+  }
+}

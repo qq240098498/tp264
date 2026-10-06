@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>污染源在线监测与排污总量核算台</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="brand-mark" aria-hidden="true"></span>
+      <h1>污染源在线监测与排污总量核算台</h1>
+    </div>
+    <div class="topbar-side">
+      <span class="today">今日<b id="todayText">—</b></span>
+      <button type="button" class="btn btn-ghost" id="settingsBtn">设置</button>
+    </div>
+  </header>
+
+  <nav class="tabs" id="tabs">
+    <button type="button" class="tab is-active" data-view="overview">概览</button>
+    <button type="button" class="tab" data-view="plants">单位与排放口</button>
+    <button type="button" class="tab" data-view="devices">在线设备</button>
+    <button type="button" class="tab" data-view="readings">监测数据</button>
+    <button type="button" class="tab" data-view="accounting">核算与报表</button>
+  </nav>
+
+  <main class="main">
+    <section class="view is-active" data-view="overview">
+      <aside class="filters" id="filters-overview"></aside>
+      <div class="content" id="content-overview"></div>
+    </section>
+    <section class="view" data-view="plants">
+      <aside class="filters" id="filters-plants"></aside>
+      <div class="content" id="content-plants"></div>
+    </section>
+    <section class="view" data-view="devices">
+      <aside class="filters" id="filters-devices"></aside>
+      <div class="content" id="content-devices"></div>
+    </section>
+    <section class="view" data-view="readings">
+      <aside class="filters" id="filters-readings"></aside>
+      <div class="content" id="content-readings"></div>
+    </section>
+    <section class="view" data-view="accounting">
+      <aside class="filters" id="filters-accounting"></aside>
+      <div class="content" id="content-accounting"></div>
+    </section>
+  </main>
+
+  <div class="error-banner" id="errorBanner" hidden>
+    <div class="error-head">
+      <b id="errorTitle">操作没成功</b>
+      <button type="button" class="btn btn-ghost btn-sm" id="errorClose">知道了</button>
+    </div>
+    <p class="error-message" id="errorMessage"></p>
+    <ul class="error-details" id="errorDetails" hidden></ul>
+  </div>
+
+  <div class="modal-mask" id="modalMask" hidden>
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
+      <div class="modal-head">
+        <span id="modalTitle">弹层</span>
+        <button type="button" class="btn btn-ghost btn-sm" id="modalClose">关闭</button>
+      </div>
+      <div class="modal-body" id="modalBody"></div>
+      <div class="modal-foot" id="modalFoot"></div>
+    </div>
+  </div>
+
+  <div class="toast" id="toast" hidden></div>
+
+  <script src="app.js"></script>
+</body>
+</html>
