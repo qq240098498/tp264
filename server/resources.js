@@ -1,6 +1,7 @@
 const { AppError } = require('./errors');
 const store = require('./store');
 const monitor = require('./monitor');
+const archives = require('./archives');
 
 const PLANT_STATUS = ['生产', '停产', '调试'];
 const OUTLET_STATUS = ['运行', '停用'];
@@ -96,6 +97,7 @@ function updatePlant(data, id, payload) {
 function removePlant(data, id) {
   const plant = data.plants.find((p) => p.id === id);
   if (!plant) throw new AppError(404, 'PLANT_NOT_FOUND', '这个排污单位不存在');
+  archives.ensurePlantDeletable(data, id);
   const outlets = monitor.outletsOf(data, plant.id);
   const used = outlets.length + data.readings.filter((r) => outlets.some((o) => o.id === r.outletId)).length;
   if (used > 0) throw new AppError(409, 'PLANT_IN_USE', '名下还有排放口与监测数据，不能删除', { count: used });
@@ -162,6 +164,7 @@ function updateOutlet(data, id, payload) {
 function removeOutlet(data, id) {
   const outlet = data.outlets.find((o) => o.id === id);
   if (!outlet) throw new AppError(404, 'OUTLET_NOT_FOUND', '这个排放口不存在');
+  archives.ensureOutletDeletable(data, id);
   const used = data.readings.filter((r) => r.outletId === id).length;
   if (used > 0) throw new AppError(409, 'OUTLET_IN_USE', '这个排放口名下还有 ' + used + ' 条监测数据，不能删除', { count: used });
   data.devices = data.devices.filter((d) => d.outletId !== id);
@@ -231,6 +234,7 @@ function updateDevice(data, id, payload) {
 function removeDevice(data, id) {
   const device = data.devices.find((d) => d.id === id);
   if (!device) throw new AppError(404, 'DEVICE_NOT_FOUND', '这个监测设备不存在');
+  archives.ensureDeviceDeletable(data, id);
   const used = data.readings.filter((r) => r.deviceId === id).length;
   if (used > 0) throw new AppError(409, 'DEVICE_IN_USE', '这台设备名下还有 ' + used + ' 条监测数据，不能删除', { count: used });
   data.devices = data.devices.filter((d) => d.id !== id);
@@ -259,6 +263,7 @@ function decorateReading(data, row) {
     concentration: monitor.effectiveConcentration(row, data.settings),
     oxygen: monitor.oxygenAt(data, row),
     flow: monitor.flowAt(data, row),
+    archive: archives.statusForMonth(data, store.monthOf(row.at)),
   });
 }
 
@@ -276,6 +281,8 @@ function validateReading(data, payload) {
 
 function createReading(data, payload) {
   validateReading(data, payload);
+  const target = { at: String(payload.at) };
+  const arc = archives.ensureReadingWritable(data, target);
   const reading = {
     id: store.nextId('rd', data.readings),
     outletId: payload.outletId,
@@ -289,13 +296,19 @@ function createReading(data, payload) {
     remark: String(payload.remark || ''),
   };
   data.readings.push(reading);
+  if (arc) archives.logReadingEvent(arc, 'created', reading, { actor: payload.actor || reading.operator });
   return decorateReading(data, reading);
 }
 
 function updateReading(data, id, payload) {
   const reading = data.readings.find((r) => r.id === id);
   if (!reading) throw new AppError(404, 'READING_NOT_FOUND', '这条监测数据不存在');
+  const arc = archives.ensureReadingWritable(data, reading);
+  if (payload.at && store.monthOf(String(payload.at)) !== store.monthOf(reading.at)) {
+    archives.ensureReadingWritable(data, { at: String(payload.at) });
+  }
   validateReading(data, Object.assign({}, reading, payload));
+  const before = { at: reading.at, value: reading.value, flag: reading.flag, source: reading.source, remark: reading.remark };
   Object.assign(reading, {
     at: String(payload.at || reading.at),
     value: payload.value === undefined ? reading.value : Number(payload.value),
@@ -303,12 +316,21 @@ function updateReading(data, id, payload) {
     source: payload.source || reading.source,
     remark: payload.remark === undefined ? reading.remark : String(payload.remark),
   });
+  if (arc) {
+    const diff = archives.diffFields(before, reading, ['at', 'value', 'flag', 'source', 'remark']);
+    archives.logReadingEvent(arc, 'updated', reading, { actor: payload.actor || '', diff });
+  }
   return decorateReading(data, reading);
 }
 
-function removeReading(data, id) {
+function removeReading(data, id, payload) {
   const reading = data.readings.find((r) => r.id === id);
   if (!reading) throw new AppError(404, 'READING_NOT_FOUND', '这条监测数据不存在');
+  const arc = archives.ensureReadingWritable(data, reading);
+  const snapshot = { id: reading.id, at: reading.at, metric: reading.metric, value: reading.value, flag: reading.flag, source: reading.source, outletId: reading.outletId, deviceId: reading.deviceId };
+  if (arc) archives.logReadingEvent(arc, 'deleted', { id: reading.id, at: reading.at, metric: reading.metric }, {
+    actor: (payload && payload.actor) || '', snapshot,
+  });
   data.readings = data.readings.filter((r) => r.id !== id);
   return { removed: id };
 }
@@ -320,7 +342,11 @@ function listReports(data, query) {
   if (q.status) rows = rows.filter((r) => r.status === q.status);
   return rows.map((r) => {
     const plant = monitor.plantOf(data, r.plantId);
-    return Object.assign({}, r, { plantCode: plant ? plant.code : '', plantName: plant ? plant.name : '' });
+    return Object.assign({}, r, {
+      plantCode: plant ? plant.code : '',
+      plantName: plant ? plant.name : '',
+      archive: archives.statusForMonth(data, String(r.period).slice(0, 7)),
+    });
   }).sort((a, b) => (a.period < b.period ? 1 : -1));
 }
 
@@ -330,7 +356,7 @@ function reportDetail(data, id) {
   const plant = monitor.plantOf(data, report.plantId);
   const month = String(report.period).slice(0, 7);
   const outlets = monitor.outletsOf(data, report.plantId).map((o) => monitor.outletSummary(data, o.id, month));
-  return Object.assign({}, report, { plant, month, outlets });
+  return Object.assign({}, report, { plant, month, outlets, archive: archives.statusForMonth(data, month) });
 }
 
 function createReport(data, payload) {
@@ -338,6 +364,7 @@ function createReport(data, payload) {
   if (!data.plants.some((p) => p.id === payload.plantId)) errors.plantId = '排污单位不存在';
   if (!/^\d{4}-\d{2}$/.test(String(payload.period || ''))) errors.period = '期间要像 2026-09';
   if (Object.keys(errors).length) throw new AppError(400, 'VALIDATION_FAILED', '这张报表没通过校验', errors);
+  const arc = archives.ensureReportWritable(data, { period: String(payload.period) });
   const report = {
     id: store.nextId('rp', data.reports),
     plantId: payload.plantId,
@@ -348,6 +375,7 @@ function createReport(data, payload) {
     remark: String(payload.remark || ''),
   };
   data.reports.push(report);
+  if (arc) archives.logReportEvent(arc, 'created', report, { actor: payload.actor || report.submittedBy });
   return report;
 }
 
@@ -357,10 +385,16 @@ function updateReport(data, id, payload) {
   if (payload.status && !REPORT_STATUS.includes(payload.status)) {
     throw new AppError(400, 'VALIDATION_FAILED', '状态只能是：' + REPORT_STATUS.join('、'), { status: '状态取值不对' });
   }
+  const arc = archives.ensureReportWritable(data, report);
+  const before = { status: report.status, submittedAt: report.submittedAt, submittedBy: report.submittedBy, remark: report.remark };
   if (payload.status) report.status = payload.status;
   if (payload.submittedAt !== undefined) report.submittedAt = String(payload.submittedAt);
   if (payload.submittedBy !== undefined) report.submittedBy = String(payload.submittedBy);
   if (payload.remark !== undefined) report.remark = String(payload.remark);
+  if (arc) {
+    const diff = archives.diffFields(before, report, ['status', 'submittedAt', 'submittedBy', 'remark']);
+    archives.logReportEvent(arc, 'updated', report, { actor: payload.actor || report.submittedBy, diff });
+  }
   return report;
 }
 

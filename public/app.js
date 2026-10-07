@@ -26,11 +26,15 @@
     devices: [],
     reports: [],
     readings: { total: 0, returned: 0, rows: [] },
+    archives: [],
+    caliber: null,
     plantsFilter: { status: '', keyword: '' },
     outletsFilter: { plantId: '', status: '' },
     devicesFilter: { outletId: '', metric: '', status: '' },
     readingsFilter: { outletId: '', deviceId: '', metric: '', day: '', month: '' },
-    accounting: { outletId: '', month: '', metric: 'COD' }
+    accounting: { outletId: '', month: '', metric: 'COD' },
+    archiveForm: { scopeType: 'month', scopeValue: '', by: '' },
+    checklist: null
   };
 
   /* ================= 基础工具 ================= */
@@ -289,6 +293,14 @@
     var cls = status === okValue ? 'tag-ok' : (status === '退回' || status === '停产' || status === '停用' || status === '故障' ? 'tag-danger' : 'tag-warn');
     return h('span', { class: 'tag ' + cls, text: status });
   }
+  function archiveTag(arc) {
+    if (!arc) return null;
+    return h('span', {
+      class: 'tag ' + (arc.archived ? 'tag-archived' : 'tag-warn'),
+      title: arc.archiveLabel + ' · ' + arc.statusText,
+      text: arc.statusText
+    });
+  }
 
   /* ================= 数据加载 ================= */
   async function loadAll() {
@@ -299,7 +311,9 @@
       api('GET', '/api/outlets'),
       api('GET', '/api/devices'),
       api('GET', '/api/readings'),
-      api('GET', '/api/reports')
+      api('GET', '/api/reports'),
+      api('GET', '/api/archives'),
+      api('GET', '/api/archives/caliber')
     ]);
     state.summary = res[0];
     state.settings = res[1];
@@ -308,6 +322,8 @@
     state.devices = res[4];
     state.readings = res[5];
     state.reports = res[6];
+    state.archives = res[7] || [];
+    state.caliber = res[8] || null;
     state.today = state.summary.today;
     state.month = state.summary.month;
     if (!state.accounting.outletId && state.outlets.length) state.accounting.outletId = state.outlets[0].id;
@@ -320,13 +336,17 @@
       api('GET', '/api/outlets'),
       api('GET', '/api/devices'),
       api('GET', '/api/reports'),
-      api('GET', '/api/summary')
+      api('GET', '/api/summary'),
+      api('GET', '/api/archives'),
+      api('GET', '/api/archives/caliber')
     ]);
     state.plants = res[0];
     state.outlets = res[1];
     state.devices = res[2];
     state.reports = res[3];
     state.summary = res[4];
+    state.archives = res[5] || [];
+    state.caliber = res[6] || null;
   }
 
   function afterMutation(msg) {
@@ -347,6 +367,7 @@
     else if (view === 'devices') renderDevices();
     else if (view === 'readings') renderReadings();
     else if (view === 'accounting') renderAccounting();
+    else if (view === 'archives') renderArchives();
   }
 
   /* ================= 概览 ================= */
@@ -742,18 +763,22 @@
   /* ================= 监测数据 ================= */
   function readingRow(r) {
     var pc = pageConcentration(r);
-    var actions = actionsCell([
+    var arc = r.archive || null;
+    var locked = !!(arc && arc.archived);
+    var actions = locked ? actionsCell([
+      h('span', { class: 'tag tag-archived', title: '该时段已归档，页面与接口均不接受修改；确需修改请到「归档管理」申请解档', text: '已归档·只读' })
+    ]) : actionsCell([
       actionBtn('修改', function () { openReadingForm(r); }),
       deleteBtn('删除', function () {
-        return api('DELETE', '/api/readings/' + r.id).then(function () { return afterMutation('已删除监测数据 ' + r.id); });
+        return api('DELETE', '/api/readings/' + r.id, {}).then(function () { return afterMutation('已删除监测数据 ' + r.id); });
       })
     ]);
     return expandableRow([
       h('td', { text: textOf(r.outletCode) }),
       h('td', { text: textOf(r.deviceCode) }),
       h('td', { text: r.metric }),
-      h('td', { class: 'nowrap', text: r.at }),
-      h('td', { class: 'mono', text: textOf(r.value) }),
+      h('td', { class: 'nowrap' }, [h('div', { text: r.at }), arc ? h('div', { class: 'row-arc' }, [archiveTag(arc)]) : null]),
+      h('td', { class: 'mono' + (locked ? ' cell-locked' : ''), text: textOf(r.value) }),
       h('td', {}, h('span', { class: 'tag ' + (r.flag === '有效' ? 'tag-ok' : 'tag-danger'), text: r.flag })),
       h('td', { text: r.source }),
       h('td', { text: textOf(r.operator) }),
@@ -1031,17 +1056,25 @@
   }
 
   function reportRow(r) {
+    var arc = r.archive || null;
+    var locked = !!(arc && arc.archived);
     var statusSel = sel(REPORT_STATUS.map(function (s) { return { value: s, label: s }; }), r.status, null);
     statusSel.addEventListener('click', function (e) { e.stopPropagation(); });
+    statusSel.disabled = locked;
+    statusSel.title = locked ? '该期间已归档，报表状态只读；确需修改请先解档' : '';
     statusSel.addEventListener('change', function (e) {
       e.stopPropagation();
       api('PATCH', '/api/reports/' + r.id, { status: statusSel.value }).then(function () {
         return afterMutation('报表状态已改为 ' + statusSel.value);
       }).catch(function (err) { showError(err); statusSel.value = r.status; });
     });
-    var actions = actionsCell([
+    var actions = actionsCell(locked ? [
       statusSel,
-      actionBtn('改备注', function () { openReportEdit(r); })
+      h('span', { class: 'tag tag-archived', title: '已归档时段，报表只读；确需修改请先解档', text: '已归档·只读' })
+    ] : [
+      statusSel,
+      actionBtn('改备注', function () { openReportEdit(r); }),
+      arc ? archiveTag(arc) : null
     ]);
     return expandableRow([
       h('td', { text: r.period }),
@@ -1171,6 +1204,389 @@
     ]));
   }
 
+  /* ================= 归档管理 ================= */
+  function kvLine(k, v) { return h('div', { class: 'kv' }, [h('b', { text: k + '：' }), h('span', { text: textOf(v) })]); }
+
+  function passTag(passed) {
+    return h('span', { class: 'tag ' + (passed ? 'tag-ok' : 'tag-danger'), text: passed ? '通过' : '未通过' });
+  }
+
+  function checklistNode(cl, opts) {
+    opts = opts || {};
+    var box = h('div');
+    box.appendChild(h('div', { class: 'section-note' }, [
+      '清单生成于 ', h('b', { text: cl.generatedAt }),
+      '　区间：', h('b', { text: cl.scope.label }),
+      '（' + cl.scope.months.length + ' 个月：' + cl.scope.months.join('、') + '）'
+    ]));
+    (cl.checks || []).forEach(function (c) {
+      var block = h('div', { class: 'check-block' });
+      block.appendChild(h('div', { class: 'check-head' }, [passTag(c.passed), h('b', { text: c.label }), h('span', { class: 'sub', text: c.summary })]));
+      if (!c.passed && c.key === 'completeness' && (c.details || []).length) {
+        var tb = h('tbody');
+        c.details.forEach(function (d) {
+          tb.appendChild(h('tr', {}, [
+            h('td', { text: d.plant }), h('td', { text: d.outlet }), h('td', { text: d.month }), h('td', { text: d.metric }),
+            h('td', { class: 'mono', text: d.presentDays + '/' + d.expectedDays }),
+            h('td', { class: 'mono num-danger', text: String(d.missingHours) }),
+            h('td', { class: 'mono', text: String(d.duplicateHours) }),
+            h('td', { text: (d.missingDaySamples || []).join('，') })
+          ]));
+        });
+        block.appendChild(h('div', { class: 'table-wrap' }, h('table', { class: 'mini-table' }, [
+          h('thead', {}, h('tr', {}, [
+            h('th', { text: '单位' }), h('th', { text: '排放口' }), h('th', { text: '月份' }), h('th', { text: '指标' }),
+            h('th', { text: '有数据天/应覆盖天' }), h('th', { text: '缺小时' }), h('th', { text: '重复时刻' }), h('th', { text: '缺数样例' })
+          ])), tb
+        ])));
+        if (c.truncated) block.appendChild(h('div', { class: 'hint', text: '明细只列前 100 项' }));
+      }
+      if (!c.passed && c.key === 'invalidReadings' && (c.details || []).length) {
+        var tb2 = h('tbody');
+        c.details.forEach(function (d) {
+          tb2.appendChild(h('tr', { class: d.handled ? '' : 'row-warn' }, [
+            h('td', { text: d.at }), h('td', { text: d.id }), h('td', { text: d.metric }),
+            h('td', { class: 'mono', text: textOf(d.value) }),
+            h('td', { text: (d.reasons || []).join('、') }),
+            h('td', {}, d.handled ? h('span', { class: 'tag tag-ok', text: '已处理' }) : h('span', { class: 'tag tag-danger', text: '未处理' })),
+            h('td', { text: textOf(d.remark) })
+          ]));
+        });
+        block.appendChild(h('div', { class: 'table-wrap' }, h('table', { class: 'mini-table' }, [
+          h('thead', {}, h('tr', {}, [
+            h('th', { text: '时刻' }), h('th', { text: '数据 ID' }), h('th', { text: '指标' }), h('th', { text: '数值' }),
+            h('th', { text: '无效原因' }), h('th', { text: '处理情况' }), h('th', { text: '处理备注' })
+          ])), tb2
+        ])));
+        if (c.truncated) block.appendChild(h('div', { class: 'hint', text: '无效应答只列前 50 条；写了备注视为已处理' }));
+      }
+      if (!c.passed && c.key === 'reportsSubmitted' && (c.details || []).length) {
+        var ul = h('ul');
+        c.details.forEach(function (d) { ul.appendChild(h('li', { text: d.plant + ' · ' + d.month + '：' + d.problem })); });
+        block.appendChild(ul);
+      }
+      box.appendChild(block);
+    });
+    if (opts.showResult) {
+      box.appendChild(h('div', { class: 'check-result ' + (cl.allPassed ? 'ok' : 'warn') },
+        cl.allPassed ? '三项检查全部通过，可以归档。' : '检查清单未全部通过：请先处理上述问题；如情况已知，可强制归档（清单结果仍会原样记入归档记录）。'));
+    }
+    return box;
+  }
+
+  // 归档/再归档撞上清单未过时，弹出强制确认
+  function forceArchiveModal(cl, onConfirm) {
+    var ck = h('label', { class: 'force-confirm' }, [
+      h('input', { type: 'checkbox' }),
+      h('span', { text: '我已知晓检查清单未全部通过，仍要归档，并承担数据口径后果' })
+    ]);
+    var body = h('div', {}, [checklistNode(cl, { showResult: false }), ck]);
+    var btn = h('button', { type: 'button', class: 'btn btn-danger', text: '强制归档' });
+    btn.disabled = true;
+    ck.querySelector('input').addEventListener('change', function () { btn.disabled = !this.checked; });
+    btn.addEventListener('click', function () { closeModal(); onConfirm(); });
+    openModal('检查清单未全部通过', body, [
+      h('button', { type: 'button', class: 'btn btn-ghost', text: '取消', onclick: closeModal }), btn
+    ]);
+  }
+
+  function archiveAction(path, payload, okMsg) {
+    return api('POST', path, payload).then(function (a) {
+      closeModal();
+      state.checklist = null;
+      return reloadCore().then(function () {
+        toast(okMsg + '（' + a.label + ' v' + a.version + '）');
+        switchView('archives');
+        openArchiveDetail(a.id);
+      });
+    }).catch(function (e) {
+      if (e.code === 'ARCHIVE_CHECKLIST_FAILED' && e.details && e.details.checklist) {
+        forceArchiveModal(e.details.checklist, function () {
+          archiveAction(path, Object.assign({}, payload, { force: true }), okMsg).catch(showError);
+        });
+        return;
+      }
+      showError(e);
+    });
+  }
+
+  function archiveRow(a) {
+    var arcTag = h('span', { class: 'tag ' + (a.status === 'archived' ? 'tag-archived' : 'tag-warn'), text: a.statusText + ' v' + a.version });
+    var btns = [actionBtn('查看', function () { openArchiveDetail(a.id); })];
+    if (a.status === 'archived') btns.push(actionBtn('申请解档', function () { openUnsealForm(a); }, 'btn-danger'));
+    else btns.push(actionBtn('改完再归档', function () { doRearchive(a); }, 'btn-accent'));
+    var tr = h('tr', { class: 'row' }, [
+      h('td', {}, h('b', { text: a.label })),
+      h('td', { text: a.scopeType === 'month' ? '按月' : '按许可年' }),
+      h('td', { class: 'mono', text: a.months.length + ' 个月' }),
+      h('td', {}, arcTag),
+      h('td', { class: 'mono', text: 'v' + a.caliberVersion }),
+      h('td', {}, a.checklistAllPassed === null ? h('span', { class: 'empty', text: '—' }) : passTag(!!a.checklistAllPassed)),
+      h('td', { class: 'mono', text: String(a.readingCount) }),
+      h('td', { class: 'mono', text: String(a.reportCount) }),
+      h('td', { class: 'mono' + (a.invalidCount > 0 ? ' num-danger' : ''), text: String(a.invalidCount) }),
+      h('td', { text: textOf(a.archivedAt) }),
+      h('td', { text: textOf(a.createdBy) }),
+      actionsCell(btns)
+    ]);
+    tr.addEventListener('click', function (ev) {
+      if (ev.target && ev.target.closest && ev.target.closest('.inline-actions')) return;
+      openArchiveDetail(a.id);
+    });
+    return tr;
+  }
+
+  function openUnsealForm(a) {
+    var fields = [
+      { name: 'reason', label: '解档原因（必填）', full: true },
+      { name: 'impactScope', label: '影响范围（涉及哪些排放口/指标/报表）', full: true },
+      { name: 'approver', label: '审批人（必填）' },
+      { name: 'by', label: '解档操作人' }
+    ];
+    var form = buildForm(fields, { reason: '', impactScope: '', approver: '', by: state.archiveForm.by || '' });
+    var btn = h('button', { type: 'button', class: 'btn btn-danger', text: '确认解档' });
+    btn.addEventListener('click', function () {
+      var p = collectForm(form);
+      api('POST', '/api/archives/' + a.id + '/unseal', p).then(function (x) {
+        state.archiveForm.by = p.by;
+        closeModal();
+        return reloadCore().then(function () {
+          toast('已解档：' + x.label + '，改完记得再归档');
+          switchView('archives');
+          openArchiveDetail(x.id);
+        });
+      }).catch(showError);
+    });
+    openModal('申请解档：' + a.label, h('div', {}, [
+      h('div', { class: 'section-note', text: '解档后该时段可改，所有修改自动记入操作流水；改完必须再归档，版本会推进到 v' + (a.version + 1) + '。' }),
+      form
+    ]), [h('button', { type: 'button', class: 'btn btn-ghost', text: '取消', onclick: closeModal }), btn]);
+  }
+
+  function doRearchive(a) {
+    archiveAction('/api/archives/' + a.id + '/rearchive', { by: state.archiveForm.by || '' }, '已重新归档');
+  }
+
+  function eventTypeText(t) {
+    var map = {
+      archive: '归档', unseal: '解档', rearchive: '再归档',
+      'reading.created': '解档期补录', 'reading.updated': '解档期修改', 'reading.deleted': '解档期删除',
+      'report.created': '解档期建报表', 'report.updated': '解档期改报表'
+    };
+    return map[t] || t;
+  }
+
+  function diffNode(diff) {
+    if (!diff || !Object.keys(diff).length) return null;
+    var ul = h('ul', { class: 'diff-list' });
+    Object.keys(diff).forEach(function (k) {
+      ul.appendChild(h('li', {}, [
+        h('b', { text: k + '：' }),
+        h('span', { class: 'diff-old', text: String(diff[k].before) }),
+        ' → ',
+        h('span', { class: 'diff-new', text: String(diff[k].after) })
+      ]));
+    });
+    return ul;
+  }
+
+  function openArchiveDetail(id) {
+    api('GET', '/api/archives/' + id).then(function (a) {
+      var body = h('div');
+      var head = h('div', { class: 'detail-grid' }, [
+        h('div', { class: 'detail-block' }, [
+          h('h3', { text: '归档区间' }),
+          kvLine('名称', a.label),
+          kvLine('粒度', a.scopeType === 'month' ? '按月' : '按许可年'),
+          kvLine('覆盖月份', a.months.join('、')),
+          kvLine('监测数据', a.readingCount + ' 条；报表 ' + a.reportCount + ' 张；无效 ' + a.invalidCount + ' 条')
+        ]),
+        h('div', { class: 'detail-block' }, [
+          h('h3', { text: '状态与版本' }),
+          h('div', { class: 'kv' }, [h('b', { text: '当前状态：' }), h('span', { class: 'tag ' + (a.status === 'archived' ? 'tag-archived' : 'tag-warn'), text: a.statusText + ' v' + a.version })]),
+          kvLine('冻结口径版本', 'v' + a.caliberVersion),
+          kvLine('首次归档', (a.createdAt || '') + (a.createdBy ? '（' + a.createdBy + '）' : '')),
+          kvLine('最近封存', (a.archivedAt || '') + (a.archivedBy ? '（' + a.archivedBy + '）' : ''))
+        ])
+      ]);
+      body.appendChild(head);
+
+      if (a.unarchive && a.unarchive.reason) {
+        body.appendChild(h('div', { class: 'detail-block unseal-box' }, [
+          h('h3', { text: '解档申请' }),
+          kvLine('解档时间', a.unarchive.at + (a.unarchive.by ? '（' + a.unarchive.by + '）' : '')),
+          kvLine('原因', a.unarchive.reason),
+          kvLine('影响范围', a.unarchive.impactScope),
+          kvLine('审批人', a.unarchive.approver),
+          kvLine('再归档时间', a.unarchive.rearchivedAt || '尚未再归档')
+        ]));
+      }
+
+      // 历史版本（每个版本冻结的清单结果与口径快照）
+      var vbox = h('div', { class: 'detail-block' });
+      vbox.appendChild(h('h3', { text: '历史版本（' + (a.versions || []).length + '）' }));
+      (a.versions || []).slice().reverse().forEach(function (ver) {
+        var item = h('div', { class: 'version-item' });
+        var sum = h('div', { class: 'check-head' }, [
+          h('span', { class: 'tag tag-warn', text: 'v' + ver.version }),
+          h('b', { text: ver.at + (ver.by ? '（' + ver.by + '）' : '') }),
+          h('span', { class: 'sub', text: ver.note }),
+          h('span', {}, passTag(ver.checklist ? ver.checklist.allPassed : false))
+        ]);
+        item.appendChild(sum);
+        var detail = h('div', { hidden: true, class: 'version-detail' });
+        detail.appendChild(checklistNode(ver.checklist, {}));
+        var snap = ver.caliberSnapshot || {};
+        detail.appendChild(h('div', { class: 'section-note', text: '当时冻结的口径（v' + ver.caliberVersion + '）：' +
+          '基准氧 ' + snap.oxygenBaseline + '，量程 ' + snap.rangeMin + '~' + snap.rangeMax +
+          '，补录上限 ' + snap.maxImputeHoursPerDay + ' 时，COD 限值 ' + snap.codDailyLimit +
+          '，氨氮限值 ' + snap.ammoniaDailyLimit + '，小时超标次数 ' + snap.hourlyExceedCountLimit +
+          '，年许可 COD ' + snap.annualPermitCodTons + ' 吨、氨氮 ' + snap.annualPermitAmmoniaTons + ' 吨。' }));
+        item.appendChild(detail);
+        sum.style.cursor = 'pointer';
+        sum.addEventListener('click', function () { detail.hidden = !detail.hidden; });
+        vbox.appendChild(item);
+      });
+      body.appendChild(vbox);
+
+      // 操作流水（留痕）
+      var ebox = h('div', { class: 'detail-block' });
+      ebox.appendChild(h('h3', { text: '操作流水（' + (a.events || []).length + ' 条，留痕不可改）' }));
+      var etb = h('tbody');
+      (a.events || []).slice().reverse().forEach(function (ev) {
+        etb.appendChild(h('tr', {}, [
+          h('td', { class: 'nowrap', text: ev.at }),
+          h('td', { text: eventTypeText(ev.type) }),
+          h('td', { text: textOf(ev.by) }),
+          h('td', {}, [h('div', { text: ev.message }), diffNode(ev.diff)])
+        ]));
+      });
+      ebox.appendChild(h('div', { class: 'table-wrap' }, h('table', { class: 'mini-table' }, [
+        h('thead', {}, h('tr', {}, [h('th', { text: '时间' }), h('th', { text: '动作' }), h('th', { text: '操作人' }), h('th', { text: '内容 / 前后值' })])),
+        etb
+      ])));
+      body.appendChild(ebox);
+
+      var foot = [h('button', { type: 'button', class: 'btn btn-ghost', text: '关闭', onclick: closeModal })];
+      if (a.status === 'archived') foot.push(h('button', { type: 'button', class: 'btn btn-danger', text: '申请解档', onclick: function () { openUnsealForm(a); } }));
+      else foot.push(h('button', { type: 'button', class: 'btn btn-accent', text: '改完再归档（v' + (a.version + 1) + '）', onclick: function () { doRearchive(a); } }));
+      openModal('归档详情：' + a.label, body, foot);
+    }).catch(showError);
+  }
+
+  function renderArchives() {
+    var f = clear(document.getElementById('filters-archives'));
+    var scopeType = state.archiveForm.scopeType;
+    var typeSel = sel([{ value: 'month', label: '按月份归档' }, { value: 'permitYear', label: '按许可年归档' }],
+      scopeType, function (v) {
+        state.archiveForm.scopeType = v;
+        state.archiveForm.scopeValue = '';
+        state.checklist = null;
+        renderArchives();
+      });
+    var valueInput = scopeType === 'month'
+      ? (function () { var i = h('input', { type: 'month' }); i.value = state.archiveForm.scopeValue; i.addEventListener('change', function () { state.archiveForm.scopeValue = i.value; }); return i; })()
+      : (function () { var i = h('input', { type: 'text', placeholder: '如 2026' }); i.value = state.archiveForm.scopeValue; i.addEventListener('change', function () { state.archiveForm.scopeValue = i.value.trim(); }); return i; })();
+    var byInput = h('input', { type: 'text', placeholder: '操作人姓名' });
+    byInput.value = state.archiveForm.by || '';
+    byInput.addEventListener('change', function () { state.archiveForm.by = byInput.value.trim(); });
+
+    f.appendChild(h('div', { class: 'filter-box' }, [
+      h('div', { class: 'filter-title', text: '发起归档' }),
+      h('div', { class: 'field' }, [h('label', { text: '归档粒度' }), typeSel]),
+      h('div', { class: 'field' }, [h('label', { text: scopeType === 'month' ? '归档月份' : '许可年标签' }), valueInput,
+        h('div', { class: 'hint', text: scopeType === 'month' ? '该月数据归档后只读' : '按各单位许可年起始日取并集' })]),
+      h('div', { class: 'field' }, [h('label', { text: '操作人' }), byInput]),
+      h('div', { class: 'btn-row' }, [
+        h('button', { type: 'button', class: 'btn btn-sm btn-ghost', text: '生成检查清单', onclick: function () {
+          if (!state.archiveForm.scopeValue) { showError({ message: '先选择要归档的月份或许可年' }); return; }
+          api('POST', '/api/archives/checklist', { scopeType: state.archiveForm.scopeType, scopeValue: state.archiveForm.scopeValue })
+            .then(function (cl) { state.checklist = cl; renderArchives(); }).catch(showError);
+        } })
+      ]),
+      h('div', { class: 'btn-row', style: 'margin-top:6px' }, [
+        h('button', { type: 'button', class: 'btn btn-sm btn-accent', text: '归档封存', onclick: function () {
+          if (!state.archiveForm.scopeValue) { showError({ message: '先选择要归档的月份或许可年' }); return; }
+          archiveAction('/api/archives', {
+            scopeType: state.archiveForm.scopeType,
+            scopeValue: state.archiveForm.scopeValue,
+            by: state.archiveForm.by || ''
+          }, '归档完成').catch(showError);
+        } })
+      ])
+    ]));
+    f.appendChild(h('div', { class: 'filter-box' }, [
+      h('div', { class: 'filter-title', text: '规矩' }),
+      h('div', { class: 'hint' }, [
+        h('p', { text: '· 归档前先出三项检查清单，清单结果与当时口径版本一起冻结记档' }),
+        h('p', { text: '· 归档后该时段页面与接口一律只读，查询统计照常' }),
+        h('p', { text: '· 确需修改：申请解档（原因/影响范围/审批人）→ 修改自动留痕 → 再归档版本 +1' })
+      ])
+    ]));
+
+    var c = clear(document.getElementById('content-archives'));
+
+    // 口径版本
+    var cal = state.caliber || { version: 1, history: [] };
+    var calTb = h('tbody');
+    (cal.history || []).slice().reverse().forEach(function (hv) {
+      calTb.appendChild(h('tr', {}, [
+        h('td', { class: 'mono', text: 'v' + hv.version }),
+        h('td', { text: hv.at }), h('td', { text: textOf(hv.by) }),
+        h('td', { text: Object.keys(hv.changes || {}).map(function (k) { return k + '：' + hv.changes[k].before + '→' + hv.changes[k].after; }).join('；') })
+      ]));
+    });
+    c.appendChild(h('div', { class: 'card' }, [
+      h('div', { class: 'card-head' }, [
+        h('h2', { text: '核算口径版本' }),
+        h('span', { class: 'sub', text: '当前 v' + cal.version + '；在「设置」里改口径会自动往前推一格，历史可查' })
+      ]),
+      h('div', { class: 'table-wrap' }, h('table', { class: 'mini-table' }, [
+        h('thead', {}, h('tr', {}, [h('th', { text: '版本' }), h('th', { text: '时间' }), h('th', { text: '操作人' }), h('th', { text: '变更字段' })])),
+        calTb
+      ]))
+    ]));
+
+    // 检查清单结果
+    if (state.checklist) {
+      c.appendChild(h('div', { class: 'card' }, [
+        h('div', { class: 'card-head' }, [
+          h('h2', { text: '归档前检查清单：' + state.checklist.scope.label }),
+          h('div', { class: 'btn-row' }, [
+            h('button', { type: 'button', class: 'btn btn-sm btn-accent', text: '按此清单归档', onclick: function () {
+              archiveAction('/api/archives', {
+                scopeType: state.checklist.scope.scopeType,
+                scopeValue: state.checklist.scope.scopeValue,
+                by: state.archiveForm.by || ''
+              }, '归档完成').catch(showError);
+            } })
+          ])
+        ]),
+        h('div', { class: 'card-body' }, checklistNode(state.checklist, { showResult: true }))
+      ]));
+    }
+
+    // 归档台账
+    var tb = h('tbody');
+    state.archives.forEach(function (a) { tb.appendChild(archiveRow(a)); });
+    c.appendChild(h('div', { class: 'card' }, [
+      h('div', { class: 'card-head' }, [
+        h('h2', { text: '归档台账' }),
+        h('span', { class: 'sub', text: '共 ' + state.archives.length + ' 条；点「查看」看版本、清单与操作流水' })
+      ]),
+      h('div', { class: 'table-wrap' }, h('table', [
+        h('thead', {}, h('tr', {}, [
+          h('th', { text: '归档区间' }), h('th', { text: '粒度' }), h('th', { text: '覆盖' }),
+          h('th', { text: '状态' }), h('th', { text: '口径版本' }), h('th', { text: '清单' }),
+          h('th', { text: '数据' }), h('th', { text: '报表' }), h('th', { text: '无效' }),
+          h('th', { text: '封存时间' }), h('th', { text: '操作人' }), h('th', { text: '操作' })
+        ])),
+        tb
+      ]))
+    ]));
+    if (!state.archives.length) c.appendChild(h('div', { class: 'empty', text: '还没有任何归档记录' }));
+  }
+
   /* ================= 设置 ================= */
   function openSettings() {
     var s = state.settings || {};
@@ -1194,10 +1610,14 @@
         payload[k] = isFinite(n) && raw[k] !== '' ? n : raw[k];
       });
       api('PATCH', '/api/settings', payload).then(function (res) {
-        state.settings = res;
-        if (state.summary) state.summary.settings = res;
+        state.settings = res.settings;
+        if (state.summary) state.summary.settings = res.settings;
         closeModal();
-        toast('设置已保存');
+        if (res.caliberBumped && res.caliberBumped.changed) {
+          toast('设置已保存，口径版本推进到 v' + res.caliberBumped.version);
+        } else {
+          toast('设置已保存');
+        }
         switchView(state.view);
       }).catch(showError);
     });

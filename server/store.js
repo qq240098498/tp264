@@ -17,12 +17,14 @@ const DEFAULT_SETTINGS = {
   annualPermitAmmoniaTons: 1.8,
   permitYearStart: '2026-01-01',
   tonsDivisor: 1000000000,
+  caliberVersion: 1,
 };
 
 function normalize(raw) {
   const data = raw && typeof raw === 'object' ? raw : {};
   data.settings = Object.assign({}, DEFAULT_SETTINGS, data.settings || {});
-  for (const key of ['plants', 'outlets', 'devices', 'readings', 'reports']) {
+  if (!Number(data.settings.caliberVersion)) data.settings.caliberVersion = 1;
+  for (const key of ['plants', 'outlets', 'devices', 'readings', 'reports', 'archives', 'caliberHistory']) {
     if (!Array.isArray(data[key])) data[key] = [];
   }
   return data;

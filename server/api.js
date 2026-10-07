@@ -3,6 +3,7 @@ const store = require('./store');
 const { AppError } = require('./errors');
 const res = require('./resources');
 const monitor = require('./monitor');
+const archives = require('./archives');
 
 const router = express.Router();
 
@@ -86,8 +87,13 @@ router.get('/summary', withData((data) => overview(data)));
 router.get('/settings', withData((data) => data.settings));
 router.patch('/settings', withData((data, req) => {
   const patch = req.body || {};
-  for (const key of Object.keys(store.DEFAULT_SETTINGS)) if (patch[key] !== undefined) data.settings[key] = patch[key];
-  return { __save: true, __body: data.settings };
+  const changes = archives.caliberChanges(data, patch);
+  for (const key of Object.keys(store.DEFAULT_SETTINGS)) {
+    if (key === 'caliberVersion') continue; // 口径版本由系统按改动自动推进，不接受直接写入
+    if (patch[key] !== undefined) data.settings[key] = patch[key];
+  }
+  const bump = archives.commitCaliberChange(data, changes, patch.by || '');
+  return { __save: true, __body: { settings: data.settings, caliberBumped: bump } };
 }));
 
 router.get('/plants', withData((data, req) => res.listPlants(data, req.query)));
@@ -122,12 +128,34 @@ router.delete('/devices/:id', withData((data, req) => ({ __save: true, __body: r
 router.get('/readings', withData((data, req) => res.listReadings(data, req.query)));
 router.post('/readings', withData((data, req) => ({ __save: true, __body: res.createReading(data, req.body || {}) })));
 router.patch('/readings/:id', withData((data, req) => ({ __save: true, __body: res.updateReading(data, req.params.id, req.body || {}) })));
-router.delete('/readings/:id', withData((data, req) => ({ __save: true, __body: res.removeReading(data, req.params.id) })));
+router.delete('/readings/:id', withData((data, req) => ({ __save: true, __body: res.removeReading(data, req.params.id, req.body || {}) })));
 
 router.get('/reports', withData((data, req) => res.listReports(data, req.query)));
 router.post('/reports', withData((data, req) => ({ __save: true, __body: res.createReport(data, req.body || {}) })));
 router.get('/reports/:id', withData((data, req) => res.reportDetail(data, req.params.id)));
 router.patch('/reports/:id', withData((data, req) => ({ __save: true, __body: res.updateReport(data, req.params.id, req.body || {}) })));
+
+/* ---------------- 归档 ---------------- */
+// 只算检查清单，不落库
+router.post('/archives/checklist', withData((data, req) => {
+  const body = req.body || {};
+  return archives.buildChecklist(data, body.scopeType, body.scopeValue);
+}));
+// 归档覆盖的月份（许可年时用于页面提示）
+router.get('/archives/months', withData((data, req) => {
+  const months = archives.monthsOfScope(data, req.query.scopeType, req.query.scopeValue);
+  return { scopeType: req.query.scopeType, scopeValue: req.query.scopeValue, months };
+}));
+router.get('/archives/caliber', withData((data) => ({
+  version: Number(data.settings.caliberVersion || 1),
+  current: archives.caliberSnapshot(data.settings),
+  history: data.caliberHistory || [],
+})));
+router.get('/archives', withData((data) => archives.listArchives(data)));
+router.post('/archives', withData((data, req) => ({ __save: true, __body: archives.createArchive(data, req.body || {}) })));
+router.get('/archives/:id', withData((data, req) => archives.archiveDetail(data, req.params.id)));
+router.post('/archives/:id/unseal', withData((data, req) => ({ __save: true, __body: archives.unsealArchive(data, req.params.id, req.body || {}) })));
+router.post('/archives/:id/rearchive', withData((data, req) => ({ __save: true, __body: archives.rearchiveArchive(data, req.params.id, req.body || {}) })));
 
 router.use((req, r, next) => next(new AppError(404, 'NOT_FOUND', '这个地址没有对应功能：' + req.method + ' ' + req.originalUrl)));
 

@@ -386,4 +386,66 @@ tr.expand-row > td {
 .summary-cell .k { font-size: 11px; color: var(--ink-3); }
 .summary-cell .v { font-size: 15px; font-weight: 600; font-variant-numeric: tabular-nums; }
 .mini-table table { font-size: 12px; }
-.inline-actions { display: flex; gap: 6px; }
+.inline-actions { display: flex; gap: 6px; align-items: center; }
+
+/* ---------- 归档 ---------- */
+.tag-archived { background: #e7ebef; border-color: #c4cdd5; color: #47565f; }
+.cell-locked { color: var(--ink-3); }
+.row-arc { margin-top: 2px; }
+.row-arc .tag { font-size: 10px; line-height: 15px; }
+tr.row-warn { background: var(--danger-soft); }
+
+.kv { font-size: 12px; margin-bottom: 3px; }
+.kv b { color: var(--ink-2); font-weight: 600; }
+
+.check-block {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 9px 10px;
+  margin-bottom: 9px;
+  background: #fffefb;
+}
+.check-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 6px; }
+.check-head .sub { font-weight: 400; color: var(--ink-2); font-size: 12px; }
+.check-result {
+  margin-top: 8px;
+  padding: 8px 10px;
+  border-radius: 4px;
+  font-size: 12px;
+}
+.check-result.ok { background: var(--ok-soft); color: var(--ok); border: 1px solid #bfdccc; }
+.check-result.warn { background: var(--accent-soft); color: var(--accent); border: 1px solid #f0d3b1; }
+
+.force-confirm {
+  display: flex; gap: 8px; align-items: flex-start;
+  margin-top: 10px; padding: 9px 10px;
+  background: var(--danger-soft); border: 1px solid #e8c2bd; border-radius: 4px;
+  color: var(--danger); font-size: 12px;
+}
+.force-confirm input { width: auto; margin-top: 2px; }
+
+.unseal-box {
+  border: 1px solid #f0d3b1;
+  background: var(--accent-soft);
+  border-radius: var(--radius);
+  padding: 9px 11px;
+  margin: 0 0 12px;
+}
+.unseal-box h3 { color: var(--accent); }
+
+.version-item {
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 7px 9px;
+  margin-bottom: 6px;
+  background: #fffefb;
+}
+.version-item .check-head { margin-bottom: 0; }
+.version-detail { margin-top: 8px; padding-top: 8px; border-top: 1px dashed var(--line); }
+
+.diff-list { margin: 4px 0 0; padding-left: 16px; font-size: 12px; }
+.diff-old { color: var(--danger); text-decoration: line-through; }
+.diff-new { color: var(--ok); font-weight: 600; }
+
+.filter-box p { margin-bottom: 4px; line-height: 1.5; }
+.modal-body .table-wrap { max-height: 40vh; }
