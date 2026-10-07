@@ -25,6 +25,11 @@ function normalize(raw) {
   for (const key of ['plants', 'outlets', 'devices', 'readings', 'reports']) {
     if (!Array.isArray(data[key])) data[key] = [];
   }
+  // 归档台账：每个归档时段一条，含版本链、检查清单、口径快照与解档/留痕记录
+  if (!Array.isArray(data.archives)) data.archives = [];
+  // 口径版本：设置每被修改一次就往前推一格，归档时把当时版本连同快照一起记下
+  if (!data.criteriaVersion) data.criteriaVersion = 1;
+  if (!Array.isArray(data.criteriaHistory)) data.criteriaHistory = [];
   return data;
 }
 

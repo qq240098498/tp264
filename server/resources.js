@@ -1,6 +1,7 @@
 const { AppError } = require('./errors');
 const store = require('./store');
 const monitor = require('./monitor');
+const archive = require('./archive');
 
 const PLANT_STATUS = ['生产', '停产', '调试'];
 const OUTLET_STATUS = ['运行', '停用'];
@@ -251,6 +252,9 @@ function listReadings(data, query) {
 function decorateReading(data, row) {
   const device = monitor.deviceOf(data, row.deviceId);
   const outlet = monitor.outletOf(data, row.outletId);
+  const day = store.dayOf(row.at);
+  const locked = archive.activeArchiveAt(data, day);
+  const open = archive.openArchiveAt(data, day);
   return Object.assign({}, row, {
     deviceCode: device ? device.code : '',
     deviceStatus: device ? device.status : '',
@@ -259,6 +263,9 @@ function decorateReading(data, row) {
     concentration: monitor.effectiveConcentration(row, data.settings),
     oxygen: monitor.oxygenAt(data, row),
     flow: monitor.flowAt(data, row),
+    archived: locked ? archive.archiveBrief(locked) : null,
+    archiveOpen: open ? archive.archiveBrief(open) : null,
+    readOnly: !!locked,
   });
 }
 
@@ -276,6 +283,8 @@ function validateReading(data, payload) {
 
 function createReading(data, payload) {
   validateReading(data, payload);
+  // 归档时段只读：新增落在已归档日的，直接明确拒绝
+  archive.guardReading(data, { at: String(payload.at) }, String(payload.at));
   const reading = {
     id: store.nextId('rd', data.readings),
     outletId: payload.outletId,
@@ -289,6 +298,8 @@ function createReading(data, payload) {
     remark: String(payload.remark || ''),
   };
   data.readings.push(reading);
+  // 落在解档窗口内的新增要留痕
+  archive.logReadingChange(data, 'create', null, reading);
   return decorateReading(data, reading);
 }
 
@@ -296,6 +307,10 @@ function updateReading(data, id, payload) {
   const reading = data.readings.find((r) => r.id === id);
   if (!reading) throw new AppError(404, 'READING_NOT_FOUND', '这条监测数据不存在');
   validateReading(data, Object.assign({}, reading, payload));
+  // 原日期与改后日期任一处在已归档时段都拒绝（防止把数据挪进/挪出归档期）
+  archive.guardReading(data, reading, reading.at);
+  if (payload.at && String(payload.at) !== reading.at) archive.guardReading(data, reading, String(payload.at));
+  const before = { id: reading.id, at: reading.at, value: reading.value, flag: reading.flag, source: reading.source, remark: reading.remark, metric: reading.metric, operator: reading.operator };
   Object.assign(reading, {
     at: String(payload.at || reading.at),
     value: payload.value === undefined ? reading.value : Number(payload.value),
@@ -303,14 +318,32 @@ function updateReading(data, id, payload) {
     source: payload.source || reading.source,
     remark: payload.remark === undefined ? reading.remark : String(payload.remark),
   });
+  archive.logReadingChange(data, 'update', before, reading);
   return decorateReading(data, reading);
 }
 
 function removeReading(data, id) {
   const reading = data.readings.find((r) => r.id === id);
   if (!reading) throw new AppError(404, 'READING_NOT_FOUND', '这条监测数据不存在');
+  archive.guardReading(data, reading, reading.at);
+  const before = { id: reading.id, at: reading.at, value: reading.value, flag: reading.flag, source: reading.source, remark: reading.remark, metric: reading.metric };
   data.readings = data.readings.filter((r) => r.id !== id);
+  archive.logReadingChange(data, 'delete', before, null);
   return { removed: id };
+}
+
+function decorateReport(data, r) {
+  const plant = monitor.plantOf(data, r.plantId);
+  const day = String(r.period).slice(0, 7) + '-01';
+  const locked = archive.activeArchiveAt(data, day);
+  const open = archive.openArchiveAt(data, day);
+  return Object.assign({}, r, {
+    plantCode: plant ? plant.code : '',
+    plantName: plant ? plant.name : '',
+    archived: locked ? archive.archiveBrief(locked) : null,
+    archiveOpen: open ? archive.archiveBrief(open) : null,
+    readOnly: !!locked,
+  });
 }
 
 function listReports(data, query) {
@@ -318,10 +351,7 @@ function listReports(data, query) {
   let rows = data.reports.slice();
   if (q.plantId) rows = rows.filter((r) => r.plantId === q.plantId);
   if (q.status) rows = rows.filter((r) => r.status === q.status);
-  return rows.map((r) => {
-    const plant = monitor.plantOf(data, r.plantId);
-    return Object.assign({}, r, { plantCode: plant ? plant.code : '', plantName: plant ? plant.name : '' });
-  }).sort((a, b) => (a.period < b.period ? 1 : -1));
+  return rows.map((r) => decorateReport(data, r)).sort((a, b) => (a.period < b.period ? 1 : -1));
 }
 
 function reportDetail(data, id) {
@@ -330,7 +360,7 @@ function reportDetail(data, id) {
   const plant = monitor.plantOf(data, report.plantId);
   const month = String(report.period).slice(0, 7);
   const outlets = monitor.outletsOf(data, report.plantId).map((o) => monitor.outletSummary(data, o.id, month));
-  return Object.assign({}, report, { plant, month, outlets });
+  return decorateReport(data, Object.assign({}, report, { plant, month, outlets }));
 }
 
 function createReport(data, payload) {
@@ -338,6 +368,8 @@ function createReport(data, payload) {
   if (!data.plants.some((p) => p.id === payload.plantId)) errors.plantId = '排污单位不存在';
   if (!/^\d{4}-\d{2}$/.test(String(payload.period || ''))) errors.period = '期间要像 2026-09';
   if (Object.keys(errors).length) throw new AppError(400, 'VALIDATION_FAILED', '这张报表没通过校验', errors);
+  // 已归档月份不能再新建报表
+  archive.guardReport(data, { period: String(payload.period) });
   const report = {
     id: store.nextId('rp', data.reports),
     plantId: payload.plantId,
@@ -348,20 +380,24 @@ function createReport(data, payload) {
     remark: String(payload.remark || ''),
   };
   data.reports.push(report);
-  return report;
+  archive.logReportChange(data, 'create', null, report);
+  return decorateReport(data, report);
 }
 
 function updateReport(data, id, payload) {
   const report = data.reports.find((r) => r.id === id);
   if (!report) throw new AppError(404, 'REPORT_NOT_FOUND', '这张报表不存在');
+  archive.guardReport(data, report);
   if (payload.status && !REPORT_STATUS.includes(payload.status)) {
     throw new AppError(400, 'VALIDATION_FAILED', '状态只能是：' + REPORT_STATUS.join('、'), { status: '状态取值不对' });
   }
+  const before = { id: report.id, period: report.period, status: report.status, submittedAt: report.submittedAt, submittedBy: report.submittedBy, remark: report.remark };
   if (payload.status) report.status = payload.status;
   if (payload.submittedAt !== undefined) report.submittedAt = String(payload.submittedAt);
   if (payload.submittedBy !== undefined) report.submittedBy = String(payload.submittedBy);
   if (payload.remark !== undefined) report.remark = String(payload.remark);
-  return report;
+  archive.logReportChange(data, 'update', before, report);
+  return decorateReport(data, report);
 }
 
 module.exports = {

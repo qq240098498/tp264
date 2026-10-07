@@ -387,3 +387,65 @@ tr.expand-row > td {
 .summary-cell .v { font-size: 15px; font-weight: 600; font-variant-numeric: tabular-nums; }
 .mini-table table { font-size: 12px; }
 .inline-actions { display: flex; gap: 6px; }
+
+/* ---------- 归档 ---------- */
+.tag-lock { background: #e7e9ec; border-color: #c8ced3; color: #46545e; font-weight: 600; }
+.tag-open { background: var(--accent-soft); border-color: #f0d3b1; color: var(--accent); font-weight: 600; }
+.lock-hint {
+  font-size: 11px;
+  color: #46545e;
+  background: #e7e9ec;
+  border: 1px solid #c8ced3;
+  border-radius: 9px;
+  padding: 0 8px;
+  line-height: 22px;
+  white-space: nowrap;
+  cursor: help;
+}
+
+.checklist-overall {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 11px;
+  border-radius: 4px;
+  margin-bottom: 12px;
+  border: 1px solid var(--line);
+}
+.checklist-overall.is-ok { background: var(--ok-soft); border-color: #bfdccc; }
+.checklist-overall.is-bad { background: var(--danger-soft); border-color: #e8c2bd; }
+.check-item {
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 10px 11px;
+  margin-bottom: 10px;
+  background: var(--card);
+}
+.check-head { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+.detail-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink);
+  margin: 14px 0 7px;
+  padding-left: 8px;
+  border-left: 3px solid var(--accent-2);
+}
+.force-line {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+  margin: 10px 0;
+  color: var(--danger);
+  font-size: 12px;
+  cursor: pointer;
+}
+.force-line input { width: auto; margin-top: 2px; }
+.form-warn {
+  background: var(--accent-soft);
+  border: 1px solid #f0d3b1;
+  border-radius: 4px;
+  padding: 8px 10px;
+  margin-bottom: 12px;
+  color: var(--accent);
+  font-size: 12px;
+}

@@ -3,6 +3,7 @@ const store = require('./store');
 const { AppError } = require('./errors');
 const res = require('./resources');
 const monitor = require('./monitor');
+const archive = require('./archive');
 
 const router = express.Router();
 
@@ -86,9 +87,42 @@ router.get('/summary', withData((data) => overview(data)));
 router.get('/settings', withData((data) => data.settings));
 router.patch('/settings', withData((data, req) => {
   const patch = req.body || {};
-  for (const key of Object.keys(store.DEFAULT_SETTINGS)) if (patch[key] !== undefined) data.settings[key] = patch[key];
+  const before = {};
+  const after = {};
+  for (const key of Object.keys(store.DEFAULT_SETTINGS)) {
+    if (patch[key] === undefined) continue;
+    if (String(data.settings[key]) !== String(patch[key])) {
+      before[key] = data.settings[key];
+      after[key] = patch[key];
+    }
+    data.settings[key] = patch[key];
+  }
+  // 口径（设置）每被实质修改一次，版本往前推一格，供归档记录对照
+  if (Object.keys(after).length) {
+    data.criteriaVersion = Number(data.criteriaVersion || 1) + 1;
+    data.criteriaHistory.push({ version: data.criteriaVersion, at: store.nowText(), by: String(patch.by || '').trim(), before, after });
+  }
   return { __save: true, __body: data.settings };
 }));
+
+/* ---------- 归档管理 ---------- */
+router.get('/archives', withData((data, req) => {
+  let rows = archive.listArchives(data);
+  if (req.query.status) rows = rows.filter((a) => a.status === req.query.status);
+  return { criteriaVersion: data.criteriaVersion, rows };
+}));
+// 归档前检查清单（只预览，不落库）：?scope=month&period=2026-09 或 ?scope=permitYear&year=2026
+router.get('/archives/checklist', withData((data, req) => {
+  const scope = req.query.scope === 'permitYear' ? 'permitYear' : 'month';
+  const bounds = archive.periodBounds(scope, scope === 'month' ? req.query.period : req.query.year, data.settings);
+  return archive.buildChecklist(data, bounds);
+}));
+router.post('/archives', withData((data, req) => ({ __save: true, __body: archive.createArchive(data, req.body || {}) })));
+router.get('/archives/:id', withData((data, req) => archive.getArchive(data, req.params.id)));
+// 解档：必须带 reason（原因）、impactScope（影响范围）、approver（审批人）
+router.post('/archives/:id/unarchive', withData((data, req) => ({ __save: true, __body: archive.unarchiveArchive(data, req.params.id, req.body || {}) })));
+// 改完重新归档：清单复跑、版本往前推一格
+router.post('/archives/:id/rearchive', withData((data, req) => ({ __save: true, __body: archive.rearchiveArchive(data, req.params.id, req.body || {}) })));
 
 router.get('/plants', withData((data, req) => res.listPlants(data, req.query)));
 router.post('/plants', withData((data, req) => ({ __save: true, __body: res.createPlant(data, req.body || {}) })));
